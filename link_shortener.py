@@ -1,23 +1,81 @@
+import pymongo
+import json
 import random
+import string
+import datetime
 import tornado.ioloop
 from tornado.web import RequestHandler
+from tornado.web import HTTPError
+
+
+client = pymongo.MongoClient()
+db = client.database
+collection = db.collection
+posts = db.posts
+
+
+def generate_shortcode():
+    chars = string.ascii_lowercase + string.digits
+    return "".join(random.choice(chars) for i in range(5))
 
 
 class ShortenUrl(RequestHandler):
-    # receive original link
-    def post(self):
-        link_original = self.request.body
-        self.write(link_original)
+    def verify_json(self, header):
+        if header.get("Content-Type", "") != "application/json":
+            raise HTTPError(400, "wrong format, JSON expected")
 
-    # return shortened link
-    def get(self):
-        self.write("Link not found in data base. Invalid or expired link")
+    def unify_data(self, body):
+        data = body.decode('utf-8')
+        try:
+            data_dict = json.loads(numbers)
+        except:
+            raise HTTPError(400, "wrong format, JSON expected")
+        return data_dict
+
+    def post(self):
+        self.verify_json(self.request.headers)
+        data = self.unify_data(self.request.body)
+        # request.body = {"original_link": "link", "days"=int}
+        original_link = data["original_link"]
+        days_to_expire = data["days"]
+
+        if days_to_expire > 6:
+            self.write("Too long time to keep the link in database, type less/equal to 6.")
+
+        shortcode = generate_shortcode()
+        expire_date = datetime.datetime.now() + datetime.timedelta(days=days_to_expire)
+
+        # inserting to database: shortcode, link, expire date
+        entry = {"shortcode": shortcode, "original_link": original_link, "expire_date": expire_date}
+        entry_id = posts.insert_one(entry).inserted_id
+
+        self.write(shortcode)
+
+
+class GetLink(RequestHandler):
+    def get(self, shortcode):
+        # check if shortcode in database
+        if shortcode is None:
+            self.write("Link not found in database - invalid shortcode.")
+
+        current_time = datetime.datetime.now()
+        current_post = db.posts.find_one({"shortcode": shortcode})
+        original_link = current_post["original_link"]
+        expire_date = current_post["expire_date"]
+
+        if current_time > expire_date:
+            db.posts.remove(current_post)
+            self.write("Link not found in database - expired.")
+
+        else:
+            self.redirect(original_link)
 
 
 def make_app():
     return tornado.web.Application([
-        (r"/", ShortenUrl),
-    ])
+        (r"/shorten_link", ShortenUrl),
+        (r"/([^/]+)", GetLink),
+    ], db=db)
 
 if __name__ == "__main__":
     app = make_app()
