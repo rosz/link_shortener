@@ -13,6 +13,9 @@ db = client.database
 collection = db.collection
 posts = db.posts
 
+# hardcode the global domain of the shortened link
+DOMAIN = "localhost:8888/"
+
 
 def generate_shortcode():
     chars = string.ascii_lowercase + string.digits
@@ -27,7 +30,7 @@ class ShortenUrl(RequestHandler):
     def unify_data(self, body):
         data = body.decode('utf-8')
         try:
-            data_dict = json.loads(numbers)
+            data_dict = json.loads(data)
         except:
             raise HTTPError(400, "wrong format, JSON expected")
         return data_dict
@@ -36,20 +39,28 @@ class ShortenUrl(RequestHandler):
         self.verify_json(self.request.headers)
         data = self.unify_data(self.request.body)
         # request.body = {"original_link": "link", "days"=int}
+        if "original_link" not in data or "days" not in data:
+            raise HTTPError(400, "dictionary key not found")
+
         original_link = data["original_link"]
         days_to_expire = data["days"]
 
-        if days_to_expire > 6:
-            self.write("Too long time to keep the link in database, type less/equal to 6.")
+        if days_to_expire > 7:
+            self.write("Too long time to keep the link in database. Type less than/equal to 7.")
 
-        shortcode = generate_shortcode()
-        expire_date = datetime.datetime.now() + datetime.timedelta(days=days_to_expire)
+        else:
+            shortcode = generate_shortcode()
+            # veify if shortcode doesn't exost already
+            while db.posts.find_one({"shortcode": shortcode}):
+                shortcode = generate_shortcode()
 
-        # inserting to database: shortcode, link, expire date
-        entry = {"shortcode": shortcode, "original_link": original_link, "expire_date": expire_date}
-        entry_id = posts.insert_one(entry).inserted_id
+            expire_date = datetime.datetime.now() + datetime.timedelta(days=days_to_expire)
 
-        self.write(shortcode)
+            # inserting to database: shortcode, link, expire date
+            entry = {"shortcode": shortcode, "original_link": original_link, "expire_date": expire_date}
+            entry_id = posts.insert_one(entry).inserted_id
+
+            self.write(DOMAIN + shortcode)
 
 
 class GetLink(RequestHandler):
